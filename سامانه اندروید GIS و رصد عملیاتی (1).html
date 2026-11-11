@@ -1,0 +1,1321 @@
+<!DOCTYPE html>
+<html lang="fa" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <meta name="theme-color" content="#0f172a">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="mobile-web-app-capable" content="yes">
+    <title>سامانه تاکتیکی GIS و رصد اطلاعاتی (نسخه اندروید)</title>
+
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+
+    <!-- Vazirmatn Persian Font -->
+    <link href="https://cdn.jsdelivr.net/gh/rastikerdar/vazirmatn@v33.003/Vazirmatn-font-face.css" rel="stylesheet" type="text/css" />
+
+    <!-- Leaflet GIS CSS & JS -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+
+    <!-- FontAwesome Icons -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" />
+
+    <style>
+        * {
+            font-family: 'Vazirmatn', sans-serif;
+            -webkit-tap-highlight-color: transparent;
+            user-select: none;
+        }
+        body, html {
+            margin: 0;
+            padding: 0;
+            width: 100%;
+            height: 100%;
+            overflow: hidden;
+            background-color: #090d16;
+            color: #e2e8f0;
+        }
+        #map {
+            width: 100%;
+            height: 100%;
+            z-index: 1;
+            background-color: #0f172a;
+        }
+        /* Custom Tactical Scrollbar */
+        ::-webkit-scrollbar {
+            width: 5px;
+            height: 5px;
+        }
+        ::-webkit-scrollbar-track {
+            background: #0f172a;
+        }
+        ::-webkit-scrollbar-thumb {
+            background: #334155;
+            border-radius: 4px;
+        }
+        /* Radar Pulse Animation for High-Threat Markers */
+        @keyframes pulse-ring {
+            0% { transform: scale(0.5); opacity: 0.9; }
+            80%, 100% { transform: scale(2.4); opacity: 0; }
+        }
+        .tactical-pulse {
+            position: relative;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        .tactical-pulse::before {
+            content: '';
+            position: absolute;
+            width: 36px;
+            height: 36px;
+            border-radius: 50%;
+            background-color: var(--pulse-color, rgba(239, 68, 68, 0.6));
+            animation: pulse-ring 2s cubic-bezier(0.215, 0.61, 0.355, 1) infinite;
+            z-index: -1;
+        }
+        /* Center Crosshair for Map Targeting */
+        .map-crosshair {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            z-index: 400;
+            pointer-events: none;
+        }
+        /* Leaflet Overrides for Dark Tactical Theme */
+        .leaflet-control-attribution {
+            display: none !important;
+        }
+        .leaflet-bar a {
+            background-color: #1e293b !important;
+            color: #38bdf8 !important;
+            border-color: #334155 !important;
+        }
+        /* Bottom Sheet Transition */
+        .bottom-sheet {
+            transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+        }
+        .sheet-hidden {
+            transform: translateY(105%);
+        }
+        .sheet-visible {
+            transform: translateY(0);
+        }
+        /* Grid Overlay Effect */
+        .hud-grid {
+            background-image: radial-gradient(rgba(56, 189, 248, 0.1) 1px, transparent 0);
+            background-size: 24px 24px;
+        }
+    </style>
+</head>
+<body class="relative flex flex-col h-screen w-screen overflow-hidden select-none">
+
+    <!-- ================= TOP ANDROID TACTICAL APP BAR ================= -->
+    <header class="relative z-30 bg-slate-900/95 backdrop-blur-md border-b border-slate-700/80 px-3 pt-2 pb-2 shadow-lg">
+        <!-- Status & Title Row -->
+        <div class="flex items-center justify-between mb-2">
+            <div class="flex items-center gap-2">
+                <div class="w-8 h-8 rounded-lg bg-emerald-500/10 border border-emerald-500/40 flex items-center justify-center text-emerald-400 shadow-inner">
+                    <i class="fa-solid fa-satellite-dish animate-pulse text-sm"></i>
+                </div>
+                <div>
+                    <div class="flex items-center gap-1.5">
+                        <h1 class="text-sm font-bold text-white tracking-wide">سامانه رصد تاکتیکی GIS</h1>
+                        <span class="px-1.5 py-0.5 text-[10px] font-semibold bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 rounded">ANDR-OSINT</span>
+                    </div>
+                    <p class="text-[10px] text-slate-400 flex items-center gap-2">
+                        <span id="live-coords" dir="ltr" class="font-mono text-sky-400">36.4520° N, 45.1200° E</span>
+                        <span>•</span>
+                        <span id="active-count-badge" class="text-amber-400">۱۲ سوژه فعال</span>
+                    </p>
+                </div>
+            </div>
+
+            <!-- Quick Header Actions -->
+            <div class="flex items-center gap-1.5">
+                <button onclick="exportGeoJSON()" title="خروجی فایل GeoJSON" class="w-8 h-8 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-600/80 flex items-center justify-center text-slate-200 active:scale-95 transition">
+                    <i class="fa-solid fa-download text-xs text-sky-400"></i>
+                </button>
+                <button onclick="openSheet('stats-sheet')" title="آمار و وضعیت لایه‌ها" class="w-8 h-8 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-600/80 flex items-center justify-center text-slate-200 active:scale-95 transition">
+                    <i class="fa-solid fa-chart-pie text-xs text-emerald-400"></i>
+                </button>
+            </div>
+        </div>
+
+        <!-- Search & Instant Group Filter Bar -->
+        <div class="flex items-center gap-1.5">
+            <div class="relative flex-1">
+                <input id="search-input" type="text" oninput="handleSearch(this.value)" placeholder="جستجوی نام گروهک، مقر، منطقه یا کد..." 
+                    class="w-full bg-slate-950/90 text-xs text-white placeholder-slate-400 rounded-lg pr-8 pl-3 py-2 border border-slate-700 focus:outline-none focus:border-sky-500">
+                <i class="fa-solid fa-magnifying-glass absolute right-2.5 top-2.5 text-slate-400 text-xs"></i>
+            </div>
+            <select id="quick-group-select" onchange="filterByFaction(this.value)" class="bg-slate-800 text-xs text-slate-200 border border-slate-700 rounded-lg px-2 py-2 focus:outline-none focus:border-sky-500">
+                <option value="ALL">همه گروهک‌ها</option>
+                <option value="SEPARATIST">تجزیه‌طلب مسلح</option>
+                <option value="TAKFIRI">تکفیری / تروریستی</option>
+                <option value="SMUGGLING">شبکه قاچاق تسلیحات</option>
+                <option value="OUTPOST">مقرهای دیدبانی و مرزی</option>
+            </select>
+        </div>
+    </header>
+
+    <!-- ================= MAIN INTERACTIVE GIS MAP AREA ================= -->
+    <main class="relative flex-1 w-full overflow-hidden">
+        <div id="map"></div>
+
+        <!-- Center Reticle / Crosshair -->
+        <div class="map-crosshair">
+            <svg width="34" height="34" viewBox="0 0 34 34" fill="none">
+                <circle cx="17" cy="17" r="6" stroke="#38bdf8" stroke-width="1.2" stroke-dasharray="2 2" opacity="0.85"/>
+                <line x1="17" y1="2" x2="17" y2="9" stroke="#38bdf8" stroke-width="1.5" opacity="0.85"/>
+                <line x1="17" y1="25" x2="17" y2="32" stroke="#38bdf8" stroke-width="1.5" opacity="0.85"/>
+                <line x1="2" y1="17" x2="9" y2="17" stroke="#38bdf8" stroke-width="1.5" opacity="0.85"/>
+                <line x1="25" y1="17" x2="32" y2="17" stroke="#38bdf8" stroke-width="1.5" opacity="0.85"/>
+                <circle cx="17" cy="17" r="1.5" fill="#ef4444"/>
+            </svg>
+        </div>
+
+        <!-- Active Mode Banner (Add Point / Measure Distance) -->
+        <div id="mode-banner" class="hidden absolute top-3 left-1/2 -translate-x-1/2 z-[500] bg-amber-500/95 text-slate-950 font-bold text-xs px-3 py-1.5 rounded-full shadow-lg flex items-center gap-2 border border-amber-300">
+            <i class="fa-solid fa-crosshairs animate-spin"></i>
+            <span id="mode-banner-text">حالت انتخاب نقطه روی نقشه فعال است</span>
+            <button onclick="cancelActiveMode()" class="bg-slate-900 text-amber-400 rounded-full w-5 h-5 flex items-center justify-center text-[10px]">✕</button>
+        </div>
+
+        <!-- Floating Right Action Buttons (Android Map HUD) -->
+        <div class="absolute top-3 right-3 z-[400] flex flex-col gap-2">
+            <button onclick="locateUserGPS()" title="موقعیت GPS گوشی" class="w-10 h-10 rounded-xl bg-slate-900/90 backdrop-blur border border-slate-700 text-sky-400 shadow-lg flex items-center justify-center active:scale-95 transition">
+                <i class="fa-solid fa-location-crosshairs text-base"></i>
+            </button>
+            <button onclick="toggleMeasureTool()" id="btn-measure" title="خط‌کش محاسبه فاصله و مسیر" class="w-10 h-10 rounded-xl bg-slate-900/90 backdrop-blur border border-slate-700 text-slate-200 shadow-lg flex items-center justify-center active:scale-95 transition">
+                <i class="fa-solid fa-ruler-combined text-sm"></i>
+            </button>
+            <button onclick="cycleBaseMap()" title="تغییر سریع نقشه پایه (ماهواره/توپوگرافی)" class="w-10 h-10 rounded-xl bg-slate-900/90 backdrop-blur border border-slate-700 text-emerald-400 shadow-lg flex items-center justify-center active:scale-95 transition">
+                <i class="fa-solid fa-globe text-base"></i>
+            </button>
+            <button onclick="resetDefaultView()" title="بازگشت به نمای کلی منطقه" class="w-10 h-10 rounded-xl bg-slate-900/90 backdrop-blur border border-slate-700 text-amber-400 shadow-lg flex items-center justify-center active:scale-95 transition">
+                <i class="fa-solid fa-compress text-sm"></i>
+            </button>
+        </div>
+
+        <!-- Floating Legend Box (Bottom Left of Map) -->
+        <div class="absolute bottom-3 left-3 z-[400] bg-slate-900/90 backdrop-blur-md border border-slate-700/80 rounded-xl p-2 text-[10px] shadow-lg space-y-1">
+            <div class="font-bold text-slate-300 border-b border-slate-700 pb-1 mb-1 flex items-center justify-between gap-3">
+                <span>راهنمای لایه‌ها</span>
+                <span id="current-basemap-label" class="text-sky-400">توپوگرافی</span>
+            </div>
+            <div class="flex items-center gap-1.5"><span class="w-2.5 h-2.5 rounded-full bg-red-500 inline-block"></span><span>مقر و اردوگاه</span></div>
+            <div class="flex items-center gap-1.5"><span class="w-2.5 h-2.5 rounded-full bg-amber-500 inline-block"></span><span>نقطه درگیری / کمین</span></div>
+            <div class="flex items-center gap-1.5"><span class="w-3 h-0.5 bg-purple-400 inline-block"></span><span>محور تردد و قاچاق</span></div>
+            <div class="flex items-center gap-1.5"><span class="w-2.5 h-2.5 rounded bg-rose-500/40 border border-rose-400 inline-block"></span><span>محدوده نفوذ (پلیگون)</span></div>
+        </div>
+    </main>
+
+    <!-- ================= BOTTOM ANDROID NAVIGATION BAR ================= -->
+    <nav class="relative z-30 bg-slate-900 border-t border-slate-800 px-2 py-1.5 grid grid-cols-5 gap-1 shadow-2xl">
+        <button onclick="openSheet('layers-sheet')" class="flex flex-col items-center justify-center py-1 rounded-lg text-slate-300 hover:text-sky-400 active:bg-slate-800 transition">
+            <i class="fa-solid fa-layer-group text-base mb-0.5 text-sky-400"></i>
+            <span class="text-[10px] font-medium">لایه‌های GIS</span>
+        </button>
+
+        <button onclick="openSheet('list-sheet')" class="flex flex-col items-center justify-center py-1 rounded-lg text-slate-300 hover:text-amber-400 active:bg-slate-800 transition">
+            <i class="fa-solid fa-list-check text-base mb-0.5 text-amber-400"></i>
+            <span class="text-[10px] font-medium">لیست سوژه‌ها</span>
+        </button>
+
+        <button onclick="startAddMarkerMode()" class="flex flex-col items-center justify-center py-1 rounded-xl bg-emerald-600/20 border border-emerald-500/40 text-emerald-300 active:scale-95 transition">
+            <i class="fa-solid fa-plus-circle text-lg mb-0.5 text-emerald-400"></i>
+            <span class="text-[10px] font-bold">ثبت نقطه رصد</span>
+        </button>
+
+        <button onclick="triggerGeoJSONUpload()" class="flex flex-col items-center justify-center py-1 rounded-lg text-slate-300 hover:text-purple-400 active:bg-slate-800 transition">
+            <i class="fa-solid fa-file-import text-base mb-0.5 text-purple-400"></i>
+            <span class="text-[10px] font-medium">ورود GeoJSON</span>
+        </button>
+
+        <button onclick="openSheet('python-sheet')" class="flex flex-col items-center justify-center py-1 rounded-lg text-slate-300 hover:text-yellow-400 active:bg-slate-800 transition">
+            <i class="fa-brands fa-python text-base mb-0.5 text-yellow-400"></i>
+            <span class="text-[10px] font-medium">کد پایتون</span>
+        </button>
+    </nav>
+
+    <!-- Hidden File Input for Importing Local GeoJSON files from Android Storage -->
+    <input type="file" id="geojson-file-input" accept=".geojson,.json" class="hidden" onchange="handleGeoJSONFile(event)" />
+
+    <!-- ================= SLIDE-UP BOTTOM SHEETS (ANDROID MODALS) ================= -->
+
+    <!-- Backdrop -->
+    <div id="sheet-backdrop" onclick="closeAllSheets()" class="hidden fixed inset-0 bg-black/60 backdrop-blur-xs z-40 transition-opacity"></div>
+
+    <!-- 1. GIS LAYERS MANAGER SHEET -->
+    <div id="layers-sheet" class="bottom-sheet sheet-hidden fixed bottom-0 left-0 right-0 z-50 bg-slate-900 border-t border-slate-700 rounded-t-2xl max-h-[82vh] flex flex-col shadow-2xl">
+        <div class="flex items-center justify-between px-4 py-3 border-b border-slate-800">
+            <div class="flex items-center gap-2">
+                <i class="fa-solid fa-layer-group text-sky-400"></i>
+                <h2 class="text-sm font-bold text-white">مدیریت لایه‌های GIS و نقشه‌های پایه</h2>
+            </div>
+            <button onclick="closeAllSheets()" class="w-7 h-7 rounded-full bg-slate-800 text-slate-400 flex items-center justify-center text-xs">✕</button>
+        </div>
+
+        <div class="p-4 overflow-y-auto space-y-4 text-xs">
+            <!-- Base Maps Section -->
+            <div>
+                <h3 class="text-slate-400 font-semibold mb-2 text-[11px]">۱. انتخاب نقشه پایه (Base Map):</h3>
+                <div class="grid grid-cols-2 gap-2">
+                    <button onclick="setBaseMap('topo')" id="bm-topo" class="p-2.5 rounded-xl border border-sky-500 bg-sky-500/10 text-right flex items-center gap-2">
+                        <i class="fa-solid fa-mountain text-sky-400 text-base"></i>
+                        <div>
+                            <div class="font-bold text-white">توپوگرافی نظامی</div>
+                            <div class="text-[10px] text-slate-400">خطوط تراز و ارتفاعات</div>
+                        </div>
+                    </button>
+                    <button onclick="setBaseMap('sat')" id="bm-sat" class="p-2.5 rounded-xl border border-slate-700 bg-slate-800/60 text-right flex items-center gap-2">
+                        <i class="fa-solid fa-satellite text-emerald-400 text-base"></i>
+                        <div>
+                            <div class="font-bold text-white">تصویر ماهواره‌ای</div>
+                            <div class="text-[10px] text-slate-400">Esri World Imagery</div>
+                        </div>
+                    </button>
+                    <button onclick="setBaseMap('dark')" id="bm-dark" class="p-2.5 rounded-xl border border-slate-700 bg-slate-800/60 text-right flex items-center gap-2">
+                        <i class="fa-solid fa-moon text-indigo-400 text-base"></i>
+                        <div>
+                            <div class="font-bold text-white">تاریک عملیاتی</div>
+                            <div class="text-[10px] text-slate-400">مناسب دید در شب</div>
+                        </div>
+                    </button>
+                    <button onclick="setBaseMap('osm')" id="bm-osm" class="p-2.5 rounded-xl border border-slate-700 bg-slate-800/60 text-right flex items-center gap-2">
+                        <i class="fa-solid fa-road text-amber-400 text-base"></i>
+                        <div>
+                            <div class="font-bold text-white">راه‌ها و شهرها</div>
+                            <div class="text-[10px] text-slate-400">OpenStreetMap</div>
+                        </div>
+                    </button>
+                </div>
+            </div>
+
+            <!-- Tactical Overlays Section -->
+            <div>
+                <h3 class="text-slate-400 font-semibold mb-2 text-[11px]">۲. لایه‌های اطلاعاتی و عملیاتی (Vector Overlays):</h3>
+                <div class="space-y-2">
+                    <label class="flex items-center justify-between p-2.5 rounded-xl bg-slate-800/70 border border-slate-700/80 cursor-pointer">
+                        <div class="flex items-center gap-2.5">
+                            <span class="w-3.5 h-3.5 rounded-full bg-red-500 inline-block shadow"></span>
+                            <div>
+                                <div class="font-bold text-white">لایه مقرها و اردوگاه‌های آموزشی</div>
+                                <div class="text-[10px] text-slate-400">به همراه شعاع پوشش و دایره تهدید</div>
+                            </div>
+                        </div>
+                        <input type="checkbox" checked onchange="toggleOverlayLayer('bases', this.checked)" class="w-4 h-4 accent-sky-500">
+                    </label>
+
+                    <label class="flex items-center justify-between p-2.5 rounded-xl bg-slate-800/70 border border-slate-700/80 cursor-pointer">
+                        <div class="flex items-center gap-2.5">
+                            <span class="w-3.5 h-3.5 rounded-full bg-amber-500 inline-block shadow"></span>
+                            <div>
+                                <div class="font-bold text-white">لایه نقاط درگیری، کمین و تحرکات</div>
+                                <div class="text-[10px] text-slate-400">گزارش‌های میدانی و رخدادهای امنیتی</div>
+                            </div>
+                        </div>
+                        <input type="checkbox" checked onchange="toggleOverlayLayer('clashes', this.checked)" class="w-4 h-4 accent-sky-500">
+                    </label>
+
+                    <label class="flex items-center justify-between p-2.5 rounded-xl bg-slate-800/70 border border-slate-700/80 cursor-pointer">
+                        <div class="flex items-center gap-2.5">
+                            <span class="w-3.5 h-3.5 rounded-full bg-purple-500 inline-block shadow"></span>
+                            <div>
+                                <div class="font-bold text-white">لایه محورهای تردد و قاچاق تسلیحات</div>
+                                <div class="text-[10px] text-slate-400">مسیرهای مال‌رو و معابر کوهستانی مرزی</div>
+                            </div>
+                        </div>
+                        <input type="checkbox" checked onchange="toggleOverlayLayer('routes', this.checked)" class="w-4 h-4 accent-sky-500">
+                    </label>
+
+                    <label class="flex items-center justify-between p-2.5 rounded-xl bg-slate-800/70 border border-slate-700/80 cursor-pointer">
+                        <div class="flex items-center gap-2.5">
+                            <span class="w-3.5 h-3.5 rounded bg-rose-500/50 border border-rose-400 inline-block"></span>
+                            <div>
+                                <div class="font-bold text-white">لایه پلیگون مناطق نفوذ و تحت رصد</div>
+                                <div class="text-[10px] text-slate-400">محدوده‌های جغرافیایی آلوده یا مشکوک</div>
+                            </div>
+                        </div>
+                        <input type="checkbox" checked onchange="toggleOverlayLayer('zones', this.checked)" class="w-4 h-4 accent-sky-500">
+                    </label>
+
+                    <label class="flex items-center justify-between p-2.5 rounded-xl bg-slate-800/70 border border-slate-700/80 cursor-pointer">
+                        <div class="flex items-center gap-2.5">
+                            <span class="w-3.5 h-3.5 rounded-full bg-sky-400 inline-block shadow"></span>
+                            <div>
+                                <div class="font-bold text-white">لایه پاسگاه‌ها و برجک‌های دیدبانی</div>
+                                <div class="text-[10px] text-slate-400">نقاط کنترلی و پایش مرزی</div>
+                            </div>
+                        </div>
+                        <input type="checkbox" checked onchange="toggleOverlayLayer('outposts', this.checked)" class="w-4 h-4 accent-sky-500">
+                    </label>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 2. INTEL TARGET DETAILS SHEET (OPENS ON MARKER CLICK) -->
+    <div id="intel-sheet" class="bottom-sheet sheet-hidden fixed bottom-0 left-0 right-0 z-50 bg-slate-900 border-t border-slate-700 rounded-t-2xl p-4 shadow-2xl">
+        <div class="flex items-start justify-between border-b border-slate-800 pb-3 mb-3">
+            <div>
+                <div class="flex items-center gap-2 mb-1">
+                    <span id="intel-badge" class="px-2 py-0.5 text-[10px] rounded font-bold bg-red-500/20 text-red-400 border border-red-500/30">سطح تهدید: بحرانی</span>
+                    <span id="intel-code" class="text-[11px] font-mono text-slate-400">#TRG-104</span>
+                </div>
+                <h3 id="intel-title" class="text-base font-bold text-white">مقر فرماندهی و لجستیک</h3>
+            </div>
+            <button onclick="closeAllSheets()" class="w-7 h-7 rounded-full bg-slate-800 text-slate-400 flex items-center justify-center text-xs">✕</button>
+        </div>
+
+        <div class="space-y-2.5 text-xs">
+            <div class="grid grid-cols-2 gap-2 bg-slate-950/80 p-2.5 rounded-xl border border-slate-800">
+                <div>
+                    <span class="text-slate-400 block text-[10px]">گروهک / دسته مرتبط:</span>
+                    <span id="intel-group" class="font-bold text-sky-400">گروهک تجزیه‌طلب</span>
+                </div>
+                <div>
+                    <span class="text-slate-400 block text-[10px]">آخرین تاریخ رصد:</span>
+                    <span id="intel-date" class="font-bold text-emerald-400">۱۴۰۵/۰۸/۱۸</span>
+                </div>
+                <div class="col-span-2 pt-1 border-t border-slate-800/80 flex items-center justify-between">
+                    <span class="text-slate-400 text-[10px]">مختصات جغرافیایی:</span>
+                    <span id="intel-coords" dir="ltr" class="font-mono text-amber-400 text-[11px]">36.1820, 45.2100</span>
+                </div>
+            </div>
+
+            <div class="bg-slate-800/50 p-3 rounded-xl border border-slate-700/70">
+                <div class="text-[10px] text-slate-400 mb-1">گزارش و جزئیات اطلاعاتی-عملیاتی:</div>
+                <p id="intel-desc" class="text-slate-200 leading-relaxed text-xs"></p>
+            </div>
+
+            <div class="flex items-center gap-2 pt-1">
+                <button id="btn-zoom-target" class="flex-1 py-2.5 rounded-xl bg-sky-600 hover:bg-sky-500 text-white font-bold flex items-center justify-center gap-1.5">
+                    <i class="fa-solid fa-magnifying-glass-location"></i>
+                    <span>زوم روی هدف</span>
+                </button>
+                <button id="btn-delete-target" class="px-4 py-2.5 rounded-xl bg-red-600/20 border border-red-500/40 text-red-400 font-bold flex items-center justify-center gap-1.5">
+                    <i class="fa-solid fa-trash-can"></i>
+                    <span>حذف</span>
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 3. ADD NEW TACTICAL POINT SHEET -->
+    <div id="add-sheet" class="bottom-sheet sheet-hidden fixed bottom-0 left-0 right-0 z-50 bg-slate-900 border-t border-slate-700 rounded-t-2xl p-4 shadow-2xl max-h-[85vh] overflow-y-auto">
+        <div class="flex items-center justify-between border-b border-slate-800 pb-3 mb-3">
+            <div class="flex items-center gap-2">
+                <i class="fa-solid fa-location-dot text-emerald-400"></i>
+                <h3 class="text-sm font-bold text-white">ثبت نقطه رصد یا واقعه جدید در GIS</h3>
+            </div>
+            <button onclick="closeAllSheets()" class="w-7 h-7 rounded-full bg-slate-800 text-slate-400 flex items-center justify-center text-xs">✕</button>
+        </div>
+
+        <form id="add-point-form" onsubmit="saveNewPoint(event)" class="space-y-3 text-xs">
+            <div class="grid grid-cols-2 gap-2">
+                <div>
+                    <label class="block text-slate-400 mb-1">عرض جغرافیایی (Lat):</label>
+                    <input type="text" id="new-lat" dir="ltr" required class="w-full bg-slate-950 border border-slate-700 rounded-lg px-2.5 py-2 text-sky-400 font-mono">
+                </div>
+                <div>
+                    <label class="block text-slate-400 mb-1">طول جغرافیایی (Lon):</label>
+                    <input type="text" id="new-lon" dir="ltr" required class="w-full bg-slate-950 border border-slate-700 rounded-lg px-2.5 py-2 text-sky-400 font-mono">
+                </div>
+            </div>
+
+            <div>
+                <label class="block text-slate-400 mb-1">عنوان سوژه / واقعه:</label>
+                <input type="text" id="new-title" required placeholder="مثلاً: مقر تدارکاتی یا نقطه کمین..." class="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-white">
+            </div>
+
+            <div class="grid grid-cols-2 gap-2">
+                <div>
+                    <label class="block text-slate-400 mb-1">نوع لایه GIS:</label>
+                    <select id="new-layer-type" class="w-full bg-slate-950 border border-slate-700 rounded-lg px-2 py-2 text-white">
+                        <option value="bases">مقر و اردوگاه (همراه شعاع)</option>
+                        <option value="clashes">نقطه درگیری / تحرک</option>
+                        <option value="outposts">پاسگاه / نقطه دیدبانی</option>
+                    </select>
+                </div>
+                <div>
+                    <label class="block text-slate-400 mb-1">دسته / گروهک:</label>
+                    <select id="new-category" class="w-full bg-slate-950 border border-slate-700 rounded-lg px-2 py-2 text-white">
+                        <option value="SEPARATIST">گروهک تجزیه‌طلب مسلح</option>
+                        <option value="TAKFIRI">گروهک تکفیری / تروریستی</option>
+                        <option value="SMUGGLING">شبکه قاچاق تسلیحات</option>
+                        <option value="OUTPOST">پاسگاه / دیدبانی خودی</option>
+                    </select>
+                </div>
+            </div>
+
+            <div class="grid grid-cols-2 gap-2">
+                <div>
+                    <label class="block text-slate-400 mb-1">نام دقیق گروهک/شاخه:</label>
+                    <input type="text" id="new-group-name" required placeholder="مثلاً: شاخه مسلح الف" class="w-full bg-slate-950 border border-slate-700 rounded-lg px-2.5 py-2 text-white">
+                </div>
+                <div>
+                    <label class="block text-slate-400 mb-1">سطح تهدید:</label>
+                    <select id="new-threat" class="w-full bg-slate-950 border border-slate-700 rounded-lg px-2 py-2 text-white">
+                        <option value="بحرانی">بحرانی (قرمز)</option>
+                        <option value="بالا">بالا (نارنجی)</option>
+                        <option value="متوسط">متوسط (زرد)</option>
+                    </select>
+                </div>
+            </div>
+
+            <div>
+                <label class="block text-slate-400 mb-1">جزئیات گزارش اطلاعاتی (تعداد نفرات، تسلیحات، ساعت):</label>
+                <textarea id="new-desc" rows="2" required placeholder="توضیحات تکمیلی رصد..." class="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-white"></textarea>
+            </div>
+
+            <button type="submit" class="w-full py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold shadow-lg">
+                ذخیره و نمایش روی نقشه GIS
+            </button>
+        </form>
+    </div>
+
+    <!-- 4. TARGETS DIRECTORY / LIST SHEET -->
+    <div id="list-sheet" class="bottom-sheet sheet-hidden fixed bottom-0 left-0 right-0 z-50 bg-slate-900 border-t border-slate-700 rounded-t-2xl max-h-[80vh] flex flex-col shadow-2xl">
+        <div class="flex items-center justify-between px-4 py-3 border-b border-slate-800">
+            <div class="flex items-center gap-2">
+                <i class="fa-solid fa-crosshairs text-amber-400"></i>
+                <h2 class="text-sm font-bold text-white">فهرست نقاط و لایه‌های ثبت‌شده روی نقشه</h2>
+            </div>
+            <button onclick="closeAllSheets()" class="w-7 h-7 rounded-full bg-slate-800 text-slate-400 flex items-center justify-center text-xs">✕</button>
+        </div>
+        <div id="targets-list-container" class="p-3 overflow-y-auto space-y-2 text-xs"></div>
+    </div>
+
+    <!-- 5. STATS & SUMMARY SHEET -->
+    <div id="stats-sheet" class="bottom-sheet sheet-hidden fixed bottom-0 left-0 right-0 z-50 bg-slate-900 border-t border-slate-700 rounded-t-2xl p-4 shadow-2xl">
+        <div class="flex items-center justify-between border-b border-slate-800 pb-3 mb-3">
+            <div class="flex items-center gap-2">
+                <i class="fa-solid fa-chart-pie text-emerald-400"></i>
+                <h2 class="text-sm font-bold text-white">خلاصه وضعیت اطلاعاتی لایه‌های GIS</h2>
+            </div>
+            <button onclick="closeAllSheets()" class="w-7 h-7 rounded-full bg-slate-800 text-slate-400 flex items-center justify-center text-xs">✕</button>
+        </div>
+        <div class="grid grid-cols-2 gap-2.5 text-xs mb-3">
+            <div class="bg-slate-800/80 border border-slate-700 p-3 rounded-xl">
+                <div class="text-slate-400 text-[10px]">مقرها و اردوگاه‌های رصد شده</div>
+                <div id="stat-bases" class="text-xl font-bold text-red-400 mt-1">0</div>
+            </div>
+            <div class="bg-slate-800/80 border border-slate-700 p-3 rounded-xl">
+                <div class="text-slate-400 text-[10px]">نقاط درگیری و تحرکات</div>
+                <div id="stat-clashes" class="text-xl font-bold text-amber-400 mt-1">0</div>
+            </div>
+            <div class="bg-slate-800/80 border border-slate-700 p-3 rounded-xl">
+                <div class="text-slate-400 text-[10px]">محورهای قاچاق و تردد</div>
+                <div class="text-xl font-bold text-purple-400 mt-1">۳ محور</div>
+            </div>
+            <div class="bg-slate-800/80 border border-slate-700 p-3 rounded-xl">
+                <div class="text-slate-400 text-[10px]">پلیگون مناطق تحت رصد</div>
+                <div class="text-xl font-bold text-rose-400 mt-1">۳ منطقه</div>
+            </div>
+        </div>
+        <button onclick="resetStoredData()" class="w-full py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 text-xs">
+            بازنشانی داده‌ها به حالت پیش‌فرض اولیه
+        </button>
+    </div>
+
+    <!-- 6. ANDROID PYTHON CODE (PYDROID 3 / BUILDOZER) SHEET -->
+    <div id="python-sheet" class="bottom-sheet sheet-hidden fixed bottom-0 left-0 right-0 z-50 bg-slate-900 border-t border-slate-700 rounded-t-2xl max-h-[88vh] flex flex-col shadow-2xl">
+        <div class="flex items-center justify-between px-4 py-3 border-b border-slate-800">
+            <div class="flex items-center gap-2">
+                <i class="fa-brands fa-python text-yellow-400 text-base"></i>
+                <h2 class="text-sm font-bold text-white">کد اجرایی پایتون مخصوص گوشی اندروید</h2>
+            </div>
+            <button onclick="closeAllSheets()" class="w-7 h-7 rounded-full bg-slate-800 text-slate-400 flex items-center justify-center text-xs">✕</button>
+        </div>
+
+        <div class="p-4 overflow-y-auto space-y-3 text-xs leading-relaxed">
+            <div class="bg-emerald-950/50 border border-emerald-500/40 rounded-xl p-3 text-emerald-200">
+                <div class="font-bold text-emerald-400 mb-1">۲ روش استفاده مستقیم روی گوشی اندروید:</div>
+                <p class="text-[11px]">
+                    ۱. <b>استفاده فوری از همین سامانه:</b> همین الان از منوی مرورگر کروم گوشی خود گزینه <b>«Add to Home Screen» (افزودن به صفحه اصلی)</b> را بزنید تا دقیقاً مثل یک اپلیکیشن بومی اندروید روی گوشی شما نصب شود.<br>
+                    ۲. <b>اجرای مستقیم در پایتون اندروید (Pydroid 3):</b> اگر می‌خواهید پروژه را داخل محیط پایتون گوشی اجرا کنید یا با Buildozer به APK تبدیل کنید، کد کامل زیر را کپی کرده و در برنامه <b>Pydroid 3</b> اجرا نمایید:
+                </p>
+            </div>
+
+            <div class="flex items-center justify-between">
+                <span class="text-slate-400 font-semibold">فایل <code class="text-sky-400">android_gis_app.py</code>:</span>
+                <button onclick="copyPythonCode()" id="btn-copy-py" class="px-3 py-1.5 rounded-lg bg-sky-600 hover:bg-sky-500 text-white font-bold text-[11px] flex items-center gap-1.5">
+                    <i class="fa-regular fa-copy"></i>
+                    <span>کپی کد پایتون</span>
+                </button>
+            </div>
+
+            <pre id="python-code-block" dir="ltr" class="bg-slate-950 border border-slate-800 rounded-xl p-3 text-[11px] font-mono text-emerald-300 overflow-x-auto select-all leading-normal">import folium
+from folium.plugins import MeasureControl, LocateControl
+import webbrowser
+import os
+
+# ساخت نقشه پایه متمرکز روی نوار مرزی غرب و شمال‌غرب
+m = folium.Map(location=[36.35, 45.15], zoom_start=8, tiles=None)
+
+# ۱. افزودن لایه‌های نقشه پایه (توپوگرافی، ماهواره‌ای و تاریک)
+folium.TileLayer(
+    tiles='https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png',
+    attr='OpenTopoMap',
+    name='نقشه توپوگرافی نظامی (ارتفاعات)'
+).add_to(m)
+
+folium.TileLayer(
+    tiles='https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
+    attr='Esri Satellite',
+    name='تصاویر ماهواره‌ای (Satellite)'
+).add_to(m)
+
+folium.TileLayer('CartoDB dark_matter', name='نقشه تاریک عملیاتی').add_to(m)
+
+# ۲. تعریف لایه‌های GIS به تفکیک موضوع
+layer_bases = folium.FeatureGroup(name='لایه مقرها و اردوگاه‌ها (قرمز)')
+layer_clashes = folium.FeatureGroup(name='لایه نقاط درگیری و کمین (نارنجی)')
+layer_routes = folium.FeatureGroup(name='لایه محورهای تردد و قاچاق (خطوط)')
+layer_zones = folium.FeatureGroup(name='لایه پلیگون مناطق تحت رصد')
+
+# افزودن نمونه مقرها با شعاع تهدید
+bases_data = [
+    {"name": "مقر پشتیبانی و لجستیک ارتفاعات قندیل", "group": "گروهک تجزیه‌طلب", "coords": [36.52, 45.02], "radius": 8000},
+    {"name": "اردوگاه آموزشی مرزی سیدکان", "group": "گروهک مسلح", "coords": [36.78, 44.62], "radius": 6500},
+]
+
+for b in bases_data:
+    folium.Marker(
+        location=b["coords"],
+        popup=f"<b>{b['name']}</b><br>گروه: {b['group']}",
+        icon=folium.Icon(color='red', icon='bullseye', prefix='fa')
+    ).add_to(layer_bases)
+    folium.Circle(
+        location=b["coords"],
+        radius=b["radius"],
+        color='#ef4444',
+        fill=True,
+        fill_opacity=0.2
+    ).add_to(layer_bases)
+
+# افزودن نمونه نقاط درگیری و رصد
+clashes_data = [
+    {"name": "رصد تیم مسلح در معبر کوهستانی", "date": "1405/08/18", "coords": [36.15, 45.32]},
+    {"name": "کشف محموله تسلیحاتی قاچاق", "date": "1405/08/14", "coords": [35.62, 46.08]},
+]
+
+for c in clashes_data:
+    folium.Marker(
+        location=c["coords"],
+        popup=f"<b>{c['name']}</b><br>تاریخ: {c['date']}",
+        icon=folium.Icon(color='orange', icon='exclamation-triangle', prefix='fa')
+    ).add_to(layer_clashes)
+
+# افزودن محور تردد کوهستانی (Polyline)
+folium.PolyLine(
+    locations=[[36.52, 45.02], [36.44, 45.18], [36.35, 45.30]],
+    color='#c084fc',
+    weight=4,
+    dash_array='8, 8',
+    popup='محور تردد و قاچاق کوهستانی شماره ۱'
+).add_to(layer_routes)
+
+# افزودن پلیگون محدوده تحت رصد
+folium.Polygon(
+    locations=[[36.45, 44.85], [36.65, 44.85], [36.65, 45.15], [36.45, 45.15]],
+    color='#f43f5e',
+    fill=True,
+    fill_opacity=0.25,
+    popup='محدوده تحت رصد پهپادی و اپتیکی'
+).add_to(layer_zones)
+
+# اضافه کردن تمام لایه‌ها به نقشه
+layer_bases.add_to(m)
+layer_clashes.add_to(m)
+layer_routes.add_to(m)
+layer_zones.add_to(m)
+
+# افزودن ابزار خط‌کش، موقعیت‌یاب GPS گوشی و کنترل لایه‌ها
+m.add_child(MeasureControl(primary_length_unit='kilometers'))
+LocateControl(auto_start=False).add_to(m)
+folium.LayerControl(collapsed=False).add_to(m)
+
+# ذخیره و باز کردن خودکار در مرورگر اندروید
+output_file = "tactical_gis_android.html"
+m.save(output_file)
+webbrowser.open("file://" + os.path.realpath(output_file))
+print("GIS Map Successfully Launched on Android!")</pre>
+        </div>
+    </div>
+
+    <!-- Toast Notification -->
+    <div id="toast" class="hidden fixed top-16 left-1/2 -translate-x-1/2 z-[600] bg-slate-900/95 border border-sky-500/60 text-white text-xs px-4 py-2 rounded-xl shadow-2xl flex items-center gap-2">
+        <i class="fa-solid fa-circle-check text-emerald-400"></i>
+        <span id="toast-msg">عملیات انجام شد</span>
+    </div>
+
+    <!-- ================= APPLICATION GIS ENGINE SCRIPT ================= -->
+    <script>
+        // 1. INITIAL TACTICAL GIS DATASET (Bases, Clashes, Checkpoints, Routes, Surveillance Polygons)
+        const DEFAULT_POINTS = [
+            {
+                id: "TRG-101",
+                title: "مقر لجستیک و پشتیبانی قندیل",
+                layerType: "bases",
+                category: "SEPARATIST",
+                groupName: "گروهک تجزیه‌طلب مسلح (پژاک/پ.ک.ک)",
+                threat: "بحرانی",
+                date: "۱۴۰۵/۰۸/۱۹",
+                lat: 36.5320,
+                lon: 45.0150,
+                radius: 7500,
+                desc: "مقر فرماندهی و دپوی تدارکات در ارتفاعات صعب‌العبور مرزی. رصد تحرکات مخابراتی و تردد خودروهای کوهستانی."
+            },
+            {
+                id: "TRG-102",
+                title: "اردوگاه آموزشی ارتفاعات سیدکان",
+                layerType: "bases",
+                category: "SEPARATIST",
+                groupName: "گروهک تجزیه‌طلب مسلح",
+                threat: "بحرانی",
+                date: "۱۴۰۵/۰۸/۱۶",
+                lat: 36.7950,
+                lon: 44.6420,
+                radius: 6000,
+                desc: "محل استقرار و آموزش تیم‌های نفوذی در عمق خاک اقلیم. نیازمند پایش مستمر تصویری و پهپادی."
+            },
+            {
+                id: "TRG-103",
+                title: "مقر تدارکاتی و تجمع زرگویز",
+                layerType: "bases",
+                category: "SEPARATIST",
+                groupName: "گروهک کومله",
+                threat: "بالا",
+                date: "۱۴۰۵/۰۸/۱۲",
+                lat: 35.3980,
+                lon: 45.5410,
+                radius: 5500,
+                desc: "مرکز سازماندهی تیم‌های تبلیغاتی و عملیاتی. تحت رصد اطلاعاتی."
+            },
+            {
+                id: "TRG-104",
+                title: "خانه امن و هسته پشتیبانی مرزی",
+                layerType: "bases",
+                category: "TAKFIRI",
+                groupName: "هسته تکفیری (بقایای داعش)",
+                threat: "بحرانی",
+                date: "۱۴۰۵/۰۸/۱۸",
+                lat: 34.8850,
+                lon: 45.7820,
+                radius: 5000,
+                desc: "محل اختفا و پشتیبانی تدارکاتی عناصر تکفیری در مجاورت ارتفاعات مرزی دیاله و اورامانات."
+            },
+            {
+                id: "INC-201",
+                title: "رصد تیم نفوذی ۴ نفره در معبر کوهستانی",
+                layerType: "clashes",
+                category: "SEPARATIST",
+                groupName: "تیم مسلح پژاک",
+                threat: "بحرانی",
+                date: "۱۴۰۵/۰۸/۱۹",
+                lat: 36.3210,
+                lon: 45.3680,
+                radius: 0,
+                desc: "مشاهده با دوربین حرارتی دید در شب در حوالی معبر مرزی سردشت - پیرانشهر. درگیری و عقب‌نشینی عناصر."
+            },
+            {
+                id: "INC-202",
+                title: "کشف و ضبط محموله سلاح شکاری و جنگی",
+                layerType: "clashes",
+                category: "SMUGGLING",
+                groupName: "شبکه قاچاق تسلیحات مرزی",
+                threat: "بالا",
+                date: "۱۴۰۵/۰۸/۱۵",
+                lat: 35.6120,
+                lon: 46.1180,
+                radius: 0,
+                desc: "توقیف محموله سلاح کمری و مهمات در محور فرعی مریوان به بانه توسط نیروهای مرزبانی و اطلاعات."
+            },
+            {
+                id: "INC-203",
+                title: "خنثی‌سازی تله انفجاری کنار جاده‌ای",
+                layerType: "clashes",
+                category: "TAKFIRI",
+                groupName: "عناصر تروریستی تکفیری",
+                threat: "بحرانی",
+                date: "۱۴۰۵/۰۸/۱۰",
+                lat: 35.1450,
+                lon: 46.2900,
+                radius: 0,
+                desc: "کشف و خنثی‌سازی بسته انفجاری کنترل از راه دور در مسیر گشت‌های مرزی."
+            },
+            {
+                id: "INC-204",
+                title: "تردد مشکوک کاروان قاچاق در دره مرزی",
+                layerType: "clashes",
+                category: "SMUGGLING",
+                groupName: "شبکه قاچاق سازمان‌یافته",
+                threat: "متوسط",
+                date: "۱۴۰۵/۰۸/۱۷",
+                lat: 36.9120,
+                lon: 44.8950,
+                radius: 0,
+                desc: "گزارش منابع محلی از تردد شبانه در محور کوهستانی اشنویه."
+            },
+            {
+                id: "OUT-301",
+                title: "پاسگاه و برجک دیدبانی مرزی تمرچین",
+                layerType: "outposts",
+                category: "OUTPOST",
+                groupName: "یگان حفاظت و پایش مرزی",
+                threat: "متوسط",
+                date: "۱۴۰۵/۰۸/۲۰",
+                lat: 36.6720,
+                lon: 45.0690,
+                radius: 0,
+                desc: "مجهز به رادار زمینی و دوربین اپتیکی حرارتی بلندبرد جهت پایش معابر."
+            },
+            {
+                id: "OUT-302",
+                title: "ایستگاه رصد الکترونیکی و اپتیکی کیله",
+                layerType: "outposts",
+                category: "OUTPOST",
+                groupName: "یگان حفاظت و پایش مرزی",
+                threat: "متوسط",
+                date: "۱۴۰۵/۰۸/۲۰",
+                lat: 36.1650,
+                lon: 45.3900,
+                radius: 0,
+                desc: "پایش ۲۴ ساعته ارتفاعات و دره‌های مرزی."
+            }
+        ];
+
+        // Tactical Smuggling & Infiltration Routes (Polylines)
+        const TACTICAL_ROUTES = [
+            {
+                name: "محور نفوذ و قاچاق شماره ۱ (قندیل - پیرانشهر)",
+                category: "SEPARATIST",
+                coords: [[36.5320, 45.0150], [36.5800, 45.1200], [36.6400, 45.1900]]
+            },
+            {
+                name: "محور انتقال تسلیحات (پنجوین - مریوان)",
+                category: "SMUGGLING",
+                coords: [[35.6200, 45.9200], [35.6150, 46.0200], [35.6120, 46.1180]]
+            },
+            {
+                name: "معبر کوهستانی سیدکان - اشنویه",
+                category: "SEPARATIST",
+                coords: [[36.7950, 44.6420], [36.8500, 44.7800], [36.9120, 44.8950]]
+            }
+        ];
+
+        // Surveillance Polygons (GeoJSON Areas)
+        const TACTICAL_ZONES = [
+            {
+                name: "منطقه قرمز پایش پهپادی (ارتفاعات قندیل)",
+                category: "SEPARATIST",
+                color: "#ef4444",
+                coords: [[36.44, 44.90], [36.64, 44.90], [36.64, 45.14], [36.44, 45.14]]
+            },
+            {
+                name: "محدوده تحت رصد شبکه قاچاق سلاح",
+                category: "SMUGGLING",
+                color: "#a855f7",
+                coords: [[35.52, 45.88], [35.70, 45.88], [35.70, 46.15], [35.52, 46.15]]
+            },
+            {
+                name: "منطقه حساس رصد تحرکات تکفیری",
+                category: "TAKFIRI",
+                color: "#f59e0b",
+                coords: [[34.78, 45.65], [35.02, 45.65], [35.02, 45.95], [34.78, 45.95]]
+            }
+        ];
+
+        // Load or Initialize Data from LocalStorage
+        let tacticalPoints = JSON.parse(localStorage.getItem('tactical_gis_points_v1')) || DEFAULT_POINTS;
+
+        // 2. INITIALIZE LEAFLET MAP & BASE LAYERS
+        const map = L.map('map', {
+            center: [36.35, 45.25],
+            zoom: 8,
+            zoomControl: false
+        });
+
+        const baseMaps = {
+            topo: L.tileLayer('https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png', { maxZoom: 17 }),
+            sat: L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', { maxZoom: 18 }),
+            dark: L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', { maxZoom: 19 }),
+            osm: L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19 })
+        };
+
+        let currentBaseKey = 'topo';
+        baseMaps.topo.addTo(map);
+
+        // Layer Groups for GIS Overlays
+        const overlayLayers = {
+            bases: L.layerGroup().addTo(map),
+            clashes: L.layerGroup().addTo(map),
+            routes: L.layerGroup().addTo(map),
+            zones: L.layerGroup().addTo(map),
+            outposts: L.layerGroup().addTo(map),
+            imported: L.layerGroup().addTo(map),
+            measure: L.layerGroup().addTo(map)
+        };
+
+        let activeFactionFilter = 'ALL';
+        let activeSearchQuery = '';
+        let currentInteractionMode = null; // 'ADD_POINT' | 'MEASURE' | null
+        let measurePoints = [];
+
+        // Update Live Coordinate Readout on Map Move
+        map.on('move', () => {
+            const c = map.getCenter();
+            document.getElementById('live-coords').textContent = `${c.lat.toFixed(4)}° N, ${c.lng.toFixed(4)}° E`;
+        });
+
+        // 3. CUSTOM TACTICAL MARKER ICON GENERATOR
+        function createTacticalIcon(layerType, threat) {
+            let bgColor = 'bg-red-600';
+            let pulseColor = 'rgba(239, 68, 68, 0.65)';
+            let iconClass = 'fa-crosshairs';
+
+            if (layerType === 'bases') {
+                bgColor = 'bg-red-600';
+                pulseColor = 'rgba(239, 68, 68, 0.7)';
+                iconClass = 'fa-campground';
+            } else if (layerType === 'clashes') {
+                bgColor = 'bg-amber-500';
+                pulseColor = 'rgba(245, 158, 11, 0.7)';
+                iconClass = 'fa-burst';
+            } else if (layerType === 'outposts') {
+                bgColor = 'bg-sky-500';
+                pulseColor = 'rgba(14, 165, 233, 0.4)';
+                iconClass = 'fa-shield-halved';
+            }
+
+            const html = `
+                <div class="tactical-pulse" style="--pulse-color: ${pulseColor}">
+                    <div class="w-7 h-7 rounded-full ${bgColor} border-2 border-white shadow-lg flex items-center justify-center text-white text-xs">
+                        <i class="fa-solid ${iconClass}"></i>
+                    </div>
+                </div>
+            `;
+
+            return L.divIcon({
+                html: html,
+                className: '',
+                iconSize: [28, 28],
+                iconAnchor: [14, 14]
+            });
+        }
+
+        // 4. RENDER ALL GIS LAYERS ON MAP
+        function renderGISLayers() {
+            overlayLayers.bases.clearLayers();
+            overlayLayers.clashes.clearLayers();
+            overlayLayers.outposts.clearLayers();
+            overlayLayers.routes.clearLayers();
+            overlayLayers.zones.clearLayers();
+
+            let visibleCount = 0;
+            let basesCount = 0;
+            let clashesCount = 0;
+
+            // Render Points (Bases, Clashes, Outposts)
+            tacticalPoints.forEach(pt => {
+                const matchesFaction = (activeFactionFilter === 'ALL' || pt.category === activeFactionFilter);
+                const matchesSearch = !activeSearchQuery ||
+                    pt.title.includes(activeSearchQuery) ||
+                    pt.groupName.includes(activeSearchQuery) ||
+                    pt.id.toLowerCase().includes(activeSearchQuery.toLowerCase()) ||
+                    pt.desc.includes(activeSearchQuery);
+
+                if (!matchesFaction || !matchesSearch) return;
+
+                visibleCount++;
+                if (pt.layerType === 'bases') basesCount++;
+                if (pt.layerType === 'clashes') clashesCount++;
+
+                const marker = L.marker([pt.lat, pt.lon], {
+                    icon: createTacticalIcon(pt.layerType, pt.threat)
+                });
+
+                marker.on('click', () => openIntelCard(pt));
+
+                const targetGroup = overlayLayers[pt.layerType] || overlayLayers.clashes;
+                marker.addTo(targetGroup);
+
+                // Add threat radius circle for Bases
+                if (pt.layerType === 'bases' && pt.radius > 0) {
+                    const circle = L.circle([pt.lat, pt.lon], {
+                        radius: pt.radius,
+                        color: '#ef4444',
+                        weight: 1.5,
+                        dashArray: '4, 4',
+                        fillColor: '#ef4444',
+                        fillOpacity: 0.15
+                    });
+                    circle.on('click', () => openIntelCard(pt));
+                    circle.addTo(overlayLayers.bases);
+                }
+            });
+
+            // Render Movement & Smuggling Routes (Polylines)
+            TACTICAL_ROUTES.forEach(route => {
+                if (activeFactionFilter !== 'ALL' && route.category !== activeFactionFilter) return;
+                const poly = L.polyline(route.coords, {
+                    color: '#c084fc',
+                    weight: 3.5,
+                    dashArray: '8, 6',
+                    opacity: 0.9
+                });
+                poly.bindPopup(`<div dir="rtl" class="text-xs font-bold text-slate-900">${route.name}</div>`);
+                poly.addTo(overlayLayers.routes);
+            });
+
+            // Render Surveillance Zones (Polygons)
+            TACTICAL_ZONES.forEach(zone => {
+                if (activeFactionFilter !== 'ALL' && zone.category !== activeFactionFilter) return;
+                const polygon = L.polygon(zone.coords, {
+                    color: zone.color,
+                    weight: 1.8,
+                    fillColor: zone.color,
+                    fillOpacity: 0.22
+                });
+                polygon.bindPopup(`<div dir="rtl" class="text-xs font-bold text-slate-900">${zone.name}</div>`);
+                polygon.addTo(overlayLayers.zones);
+            });
+
+            // Update Top HUD Badge & Stats
+            document.getElementById('active-count-badge').textContent = `${visibleCount} سوژه فعال`;
+            document.getElementById('stat-bases').textContent = `${basesCount} مقر`;
+            document.getElementById('stat-clashes').textContent = `${clashesCount} مورد`;
+            renderTargetsDirectoryList();
+        }
+
+        // 5. OPEN TARGET INTELLIGENCE BOTTOM SHEET
+        function openIntelCard(pt) {
+            document.getElementById('intel-title').textContent = pt.title;
+            document.getElementById('intel-code').textContent = `#${pt.id}`;
+            document.getElementById('intel-group').textContent = pt.groupName;
+            document.getElementById('intel-date').textContent = pt.date;
+            document.getElementById('intel-coords').textContent = `${pt.lat.toFixed(4)}° N, ${pt.lon.toFixed(4)}° E`;
+            document.getElementById('intel-desc').textContent = pt.desc;
+
+            const badge = document.getElementById('intel-badge');
+            badge.textContent = `سطح تهدید: ${pt.threat}`;
+            if (pt.threat === 'بحرانی') {
+                badge.className = 'px-2 py-0.5 text-[10px] rounded font-bold bg-red-500/20 text-red-400 border border-red-500/30';
+            } else if (pt.threat === 'بالا') {
+                badge.className = 'px-2 py-0.5 text-[10px] rounded font-bold bg-amber-500/20 text-amber-400 border border-amber-500/30';
+            } else {
+                badge.className = 'px-2 py-0.5 text-[10px] rounded font-bold bg-sky-500/20 text-sky-400 border border-sky-500/30';
+            }
+
+            document.getElementById('btn-zoom-target').onclick = () => {
+                closeAllSheets();
+                map.flyTo([pt.lat, pt.lon], 12, { duration: 1.2 });
+            };
+
+            document.getElementById('btn-delete-target').onclick = () => {
+                tacticalPoints = tacticalPoints.filter(item => item.id !== pt.id);
+                localStorage.setItem('tactical_gis_points_v1', JSON.stringify(tacticalPoints));
+                renderGISLayers();
+                closeAllSheets();
+                showToast('نقطه مورد نظر از لایه GIS حذف شد');
+            };
+
+            openSheet('intel-sheet');
+        }
+
+        // 6. DIRECTORY LIST RENDERER
+        function renderTargetsDirectoryList() {
+            const container = document.getElementById('targets-list-container');
+            container.innerHTML = '';
+
+            tacticalPoints.forEach(pt => {
+                const card = document.createElement('div');
+                card.className = 'p-2.5 rounded-xl bg-slate-800/80 border border-slate-700 flex items-center justify-between cursor-pointer active:bg-slate-700';
+                card.onclick = () => {
+                    closeAllSheets();
+                    map.flyTo([pt.lat, pt.lon], 11, { duration: 1 });
+                    setTimeout(() => openIntelCard(pt), 450);
+                };
+
+                const dotColor = pt.layerType === 'bases' ? 'bg-red-500' : (pt.layerType === 'clashes' ? 'bg-amber-500' : 'bg-sky-400');
+
+                card.innerHTML = `
+                    <div class="flex items-center gap-2.5">
+                        <span class="w-3 h-3 rounded-full ${dotColor} shrink-0"></span>
+                        <div>
+                            <div class="font-bold text-white text-xs">${pt.title}</div>
+                            <div class="text-[10px] text-slate-400">${pt.groupName} • ${pt.date}</div>
+                        </div>
+                    </div>
+                    <i class="fa-solid fa-chevron-left text-slate-500 text-xs"></i>
+                `;
+                container.appendChild(card);
+            });
+        }
+
+        // 7. BASE MAP & OVERLAY LAYER CONTROLS
+        function setBaseMap(key) {
+            map.removeLayer(baseMaps[currentBaseKey]);
+            baseMaps[key].addTo(map);
+            currentBaseKey = key;
+
+            const names = { topo: 'توپوگرافی', sat: 'ماهواره‌ای', dark: 'تاریک عملیاتی', osm: 'راه‌ها' };
+            document.getElementById('current-basemap-label').textContent = names[key];
+
+            ['topo', 'sat', 'dark', 'osm'].forEach(k => {
+                const btn = document.getElementById(`bm-${k}`);
+                if (k === key) {
+                    btn.className = 'p-2.5 rounded-xl border border-sky-500 bg-sky-500/10 text-right flex items-center gap-2';
+                } else {
+                    btn.className = 'p-2.5 rounded-xl border border-slate-700 bg-slate-800/60 text-right flex items-center gap-2';
+                }
+            });
+        }
+
+        function cycleBaseMap() {
+            const order = ['topo', 'sat', 'dark', 'osm'];
+            const nextIdx = (order.indexOf(currentBaseKey) + 1) % order.length;
+            setBaseMap(order[nextIdx]);
+            showToast(`نقشه پایه: ${document.getElementById('current-basemap-label').textContent}`);
+        }
+
+        function toggleOverlayLayer(layerKey, isChecked) {
+            if (isChecked) {
+                map.addLayer(overlayLayers[layerKey]);
+            } else {
+                map.removeLayer(overlayLayers[layerKey]);
+            }
+        }
+
+        function filterByFaction(category) {
+            activeFactionFilter = category;
+            renderGISLayers();
+        }
+
+        function handleSearch(query) {
+            activeSearchQuery = query.trim();
+            renderGISLayers();
+        }
+
+        // 8. INTERACTIVE MAP TOOLS (ADD MARKER & DISTANCE RULER)
+        function startAddMarkerMode() {
+            closeAllSheets();
+            currentInteractionMode = 'ADD_POINT';
+            const banner = document.getElementById('mode-banner');
+            document.getElementById('mode-banner-text').textContent = 'روی نقطه مورد نظر در نقشه ضربه بزنید';
+            banner.classList.remove('hidden');
+        }
+
+        function toggleMeasureTool() {
+            if (currentInteractionMode === 'MEASURE') {
+                cancelActiveMode();
+                return;
+            }
+            closeAllSheets();
+            currentInteractionMode = 'MEASURE';
+            measurePoints = [];
+            overlayLayers.measure.clearLayers();
+            document.getElementById('btn-measure').classList.add('border-amber-400', 'text-amber-400');
+
+            const banner = document.getElementById('mode-banner');
+            document.getElementById('mode-banner-text').textContent = 'خط‌کش فعال: نقاط را روی نقشه لمس کنید';
+            banner.classList.remove('hidden');
+        }
+
+        function cancelActiveMode() {
+            currentInteractionMode = null;
+            measurePoints = [];
+            overlayLayers.measure.clearLayers();
+            document.getElementById('mode-banner').classList.add('hidden');
+            document.getElementById('btn-measure').classList.remove('border-amber-400', 'text-amber-400');
+        }
+
+        map.on('click', (e) => {
+            if (currentInteractionMode === 'ADD_POINT') {
+                document.getElementById('new-lat').value = e.latlng.lat.toFixed(5);
+                document.getElementById('new-lon').value = e.latlng.lng.toFixed(5);
+                cancelActiveMode();
+                openSheet('add-sheet');
+            } else if (currentInteractionMode === 'MEASURE') {
+                measurePoints.push(e.latlng);
+                L.circleMarker(e.latlng, { radius: 5, color: '#f59e0b', fillColor: '#f59e0b', fillOpacity: 1 }).addTo(overlayLayers.measure);
+
+                if (measurePoints.length > 1) {
+                    L.polyline(measurePoints, { color: '#f59e0b', weight: 3, dashArray: '5, 5' }).addTo(overlayLayers.measure);
+                    let totalDistMeters = 0;
+                    for (let i = 1; i < measurePoints.length; i++) {
+                        totalDistMeters += measurePoints[i - 1].distanceTo(measurePoints[i]);
+                    }
+                    const km = (totalDistMeters / 1000).toFixed(2);
+                    document.getElementById('mode-banner-text').textContent = `فاصله هوایی مسیر: ${km} کیلومتر`;
+                }
+            }
+        });
+
+        function saveNewPoint(e) {
+            e.preventDefault();
+            const layerType = document.getElementById('new-layer-type').value;
+            const newPt = {
+                id: 'USR-' + Math.floor(100 + Math.random() * 900),
+                title: document.getElementById('new-title').value,
+                layerType: layerType,
+                category: document.getElementById('new-category').value,
+                groupName: document.getElementById('new-group-name').value,
+                threat: document.getElementById('new-threat').value,
+                date: '۱۴۰۵/۰۸/۲۰',
+                lat: parseFloat(document.getElementById('new-lat').value),
+                lon: parseFloat(document.getElementById('new-lon').value),
+                radius: layerType === 'bases' ? 5000 : 0,
+                desc: document.getElementById('new-desc').value
+            };
+
+            tacticalPoints.unshift(newPt);
+            localStorage.setItem('tactical_gis_points_v1', JSON.stringify(tacticalPoints));
+            renderGISLayers();
+            closeAllSheets();
+            e.target.reset();
+            map.flyTo([newPt.lat, newPt.lon], 11);
+            showToast('نقطه جدید با موفقیت در لایه GIS ثبت شد');
+        }
+
+        // 9. IMPORT & EXPORT GEOJSON FILES ON ANDROID
+        function triggerGeoJSONUpload() {
+            document.getElementById('geojson-file-input').click();
+        }
+
+        function handleGeoJSONFile(event) {
+            const file = event.target.files[0];
+            if (!file) return;
+
+            const reader = new FileReader();
+            reader.onload = function(e) {
+                try {
+                    const geojsonData = JSON.parse(e.target.result);
+                    const geoLayer = L.geoJSON(geojsonData, {
+                        style: { color: '#10b981', weight: 2.5, fillOpacity: 0.25 },
+                        onEachFeature: (feature, layer) => {
+                            if (feature.properties) {
+                                const title = feature.properties.name || feature.properties.title || 'لایه وارد شده';
+                                layer.bindPopup(`<div dir="rtl" class="text-xs font-bold text-slate-900">${title}</div>`);
+                            }
+                        }
+                    }).addTo(overlayLayers.imported);
+
+                    map.fitBounds(geoLayer.getBounds());
+                    showToast('فایل GeoJSON با موفقیت روی نقشه بارگذاری شد');
+                } catch (err) {
+                    showToast('خطا در ساختار فایل GeoJSON انتخاب شده');
+                }
+            };
+            reader.readAsText(file);
+        }
+
+        function exportGeoJSON() {
+            const features = tacticalPoints.map(pt => ({
+                type: "Feature",
+                properties: {
+                    id: pt.id,
+                    name: pt.title,
+                    group: pt.groupName,
+                    category: pt.category,
+                    threat: pt.threat,
+                    date: pt.date,
+                    description: pt.desc
+                },
+                geometry: {
+                    type: "Point",
+                    coordinates: [pt.lon, pt.lat]
+                }
+            }));
+
+            const geojsonObj = { type: "FeatureCollection", features: features };
+            const blob = new Blob([JSON.stringify(geojsonObj, null, 2)], { type: "application/geo+json" });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = "tactical_gis_export.geojson";
+            a.click();
+            URL.revokeObjectURL(url);
+            showToast('فایل GeoJSON لایه‌ها دانلود شد');
+        }
+
+        // 10. GPS LOCATE & UTILITY HELPERS
+        function locateUserGPS() {
+            if (!navigator.geolocation) {
+                showToast('موقعیت‌یاب GPS در مرورگر شما فعال نیست');
+                return;
+            }
+            showToast('در حال دریافت مختصات GPS گوشی...');
+            navigator.geolocation.getCurrentPosition(
+                (pos) => {
+                    const { latitude, longitude } = pos.coords;
+                    L.circleMarker([latitude, longitude], {
+                        radius: 8,
+                        color: '#38bdf8',
+                        fillColor: '#0284c7',
+                        fillOpacity: 0.9
+                    }).addTo(map).bindPopup('<div dir="rtl" class="text-xs font-bold text-slate-900">موقعیت فعلی گوشی شما</div>').openPopup();
+                    map.flyTo([latitude, longitude], 12);
+                },
+                () => showToast('دسترسی به GPS گوشی تایید نشد یا سیگنال ضعیف است')
+            );
+        }
+
+        function resetDefaultView() {
+            map.flyTo([36.35, 45.25], 8, { duration: 1 });
+        }
+
+        function resetStoredData() {
+            localStorage.removeItem('tactical_gis_points_v1');
+            tacticalPoints = [...DEFAULT_POINTS];
+            renderGISLayers();
+            closeAllSheets();
+            showToast('لایه ها به وضعیت پیش‌فرض بازنشانی شدند');
+        }
+
+        function openSheet(sheetId) {
+            closeAllSheets();
+            document.getElementById('sheet-backdrop').classList.remove('hidden');
+            const sheet = document.getElementById(sheetId);
+            sheet.classList.remove('sheet-hidden');
+            sheet.classList.add('sheet-visible');
+        }
+
+        function closeAllSheets() {
+            document.getElementById('sheet-backdrop').classList.add('hidden');
+            document.querySelectorAll('.bottom-sheet').forEach(el => {
+                el.classList.remove('sheet-visible');
+                el.classList.add('sheet-hidden');
+            });
+        }
+
+        function copyPythonCode() {
+            const codeText = document.getElementById('python-code-block').innerText;
+            const tempInput = document.createElement('textarea');
+            tempInput.value = codeText;
+            document.body.appendChild(tempInput);
+            tempInput.select();
+            document.execCommand('copy');
+            document.body.removeChild(tempInput);
+            showToast('کد پایتون کپی شد! آماده اجرا در Pydroid 3');
+        }
+
+        function showToast(msg) {
+            const toast = document.getElementById('toast');
+            document.getElementById('toast-msg').textContent = msg;
+            toast.classList.remove('hidden');
+            setTimeout(() => toast.classList.add('hidden'), 3000);
+        }
+
+        // Initialize Map on Load
+        window.onload = () => {
+            renderGISLayers();
+        };
+    </script>
+</body>
+</html>
